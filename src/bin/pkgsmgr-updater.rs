@@ -4,9 +4,9 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::LazyLock;
 
-use pkgsmgr::Compression;
 use pkgsmgr::chunks::{chunk_filename, clean_old_chunks, install_chunk};
 use pkgsmgr::manifest::{build_tree, parse_manifest, update_manifest};
+use pkgsmgr::types::Compression;
 use pkgsmgr::utils::get;
 
 static MAJOR_VERSION: LazyLock<usize> =
