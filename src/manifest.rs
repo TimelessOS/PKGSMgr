@@ -3,6 +3,8 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
+use crate::chunks::Chunk;
+
 pub fn parse_manifest(raw_manifest: &str) -> (HashMap<&str, &str>, Vec<Chunk>) {
     let (raw_headers, raw_chunklist) = raw_manifest
         .split_once("---")
@@ -24,14 +26,6 @@ fn parse_headers(raw_headers: &str) -> HashMap<&str, &str> {
     }
 
     headers
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Chunk {
-    pub hash: String,
-    pub size: u64,
-    pub path: String,
-    pub permissions: u32,
 }
 
 fn parse_chunklist(raw_chunklist: &str) -> Vec<Chunk> {
