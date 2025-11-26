@@ -7,8 +7,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use tokio::io::{AsyncReadExt, BufReader};
 
-use crate::Compression;
 use crate::manifest::parse_manifest;
+use crate::types::Compression;
 use crate::utils::get;
 
 #[derive(Debug, Clone, PartialEq)]
