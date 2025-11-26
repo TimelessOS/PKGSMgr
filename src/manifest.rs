@@ -3,7 +3,7 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-use crate::chunks::Chunk;
+use crate::chunks::{Chunk, chunk_filename};
 
 pub fn parse_manifest(raw_manifest: &str) -> (HashMap<&str, &str>, Vec<Chunk>) {
     let (raw_headers, raw_chunklist) = raw_manifest
@@ -75,6 +75,29 @@ pub fn update_manifest(new_manifest: &str, manifests_path: &Path) -> Result<bool
     fs::write(current_path, new_manifest)?;
 
     Ok(true)
+}
+
+pub fn build_tree(
+    staging_path: &Path,
+    chunkstore_path: &Path,
+    chunks: &[Chunk],
+) -> Result<(), std::io::Error> {
+    if staging_path.exists() {
+        fs::remove_dir_all(staging_path)?;
+    }
+    fs::create_dir_all(staging_path)?;
+
+    for chunk in chunks {
+        let path = staging_path.join(&chunk.path);
+        let parent_path = path.parent().unwrap_or_else(|| Path::new("/"));
+        if !parent_path.exists() {
+            fs::create_dir_all(parent_path)?;
+        }
+
+        fs::hard_link(chunkstore_path.join(chunk_filename(chunk)), path)?;
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

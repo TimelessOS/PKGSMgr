@@ -1,14 +1,16 @@
 use clap::Parser;
 use nix::fcntl::{AT_FDCWD, RenameFlags, renameat2};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::LazyLock;
 
 pub mod chunks;
 pub mod manifest;
+pub mod utils;
 
-use chunks::{Chunk, chunk_filename, clean_old_chunks, install_chunk};
-use manifest::{parse_manifest, update_manifest};
+use chunks::{chunk_filename, clean_old_chunks, install_chunk};
+use manifest::{build_tree, parse_manifest, update_manifest};
+use utils::get;
 
 static MAJOR_VERSION: LazyLock<usize> =
     LazyLock::new(|| env!("CARGO_PKG_VERSION_MAJOR").parse::<usize>().unwrap());
@@ -114,36 +116,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let freed_bytes =
         clean_old_chunks(manifests_path, chunks_path).expect("could not free old chunks");
     println!("Freed {}kb", freed_bytes / 1024);
-
-    Ok(())
-}
-
-async fn get(url: &str) -> Result<reqwest::Response, reqwest::Error> {
-    let req = reqwest::get(url).await?;
-    let req = req.error_for_status()?;
-
-    Ok(req)
-}
-
-fn build_tree(
-    staging_path: &Path,
-    chunkstore_path: &Path,
-    chunks: &[Chunk],
-) -> Result<(), std::io::Error> {
-    if staging_path.exists() {
-        fs::remove_dir_all(staging_path)?;
-    }
-    fs::create_dir_all(staging_path)?;
-
-    for chunk in chunks {
-        let path = staging_path.join(&chunk.path);
-        let parent_path = path.parent().unwrap_or_else(|| Path::new("/"));
-        if !parent_path.exists() {
-            fs::create_dir_all(parent_path)?;
-        }
-
-        fs::hard_link(chunkstore_path.join(chunk_filename(chunk)), path)?;
-    }
 
     Ok(())
 }
