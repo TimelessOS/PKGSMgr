@@ -4,23 +4,15 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::LazyLock;
 
-pub mod chunks;
-pub mod manifest;
-pub mod utils;
-
-use chunks::{chunk_filename, clean_old_chunks, install_chunk};
-use manifest::{build_tree, parse_manifest, update_manifest};
-use utils::get;
+use pkgsmgr::Compression;
+use pkgsmgr::chunks::{chunk_filename, clean_old_chunks, install_chunk};
+use pkgsmgr::manifest::{build_tree, parse_manifest, update_manifest};
+use pkgsmgr::utils::get;
 
 static MAJOR_VERSION: LazyLock<usize> =
     LazyLock::new(|| env!("CARGO_PKG_VERSION_MAJOR").parse::<usize>().unwrap());
 static MINOR_VERSION: LazyLock<usize> =
     LazyLock::new(|| env!("CARGO_PKG_VERSION_MINOR").parse::<usize>().unwrap());
-
-pub enum Compression {
-    None,
-    Zstd,
-}
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]

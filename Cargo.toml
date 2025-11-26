@@ -1,5 +1,5 @@
 [package]
-name = "PKGSMgr"
+name = "pkgsmgr"
 version = "0.1.0"
 edition = "2024"
 
@@ -16,4 +16,3 @@ tokio-util = { version = "0.7.17", features = ["io"] }
 [profile.release]
 lto = true
 strip = true
-

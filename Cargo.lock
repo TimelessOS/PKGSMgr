@@ -3,20 +3,6 @@
 version = 4
 
 [[package]]
-name = "PKGSMgr"
-version = "0.1.0"
-dependencies = [
- "async-compression",
- "blake3",
- "clap",
- "futures-util",
- "nix",
- "reqwest",
- "tokio",
- "tokio-util",
-]
-
-[[package]]
 name = "anstream"
 version = "0.6.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -870,6 +856,20 @@ name = "pkg-config"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
+
+[[package]]
+name = "pkgsmgr"
+version = "0.1.0"
+dependencies = [
+ "async-compression",
+ "blake3",
+ "clap",
+ "futures-util",
+ "nix",
+ "reqwest",
+ "tokio",
+ "tokio-util",
+]
 
 [[package]]
 name = "potential_utf"

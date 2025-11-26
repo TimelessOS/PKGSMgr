@@ -8,8 +8,8 @@ use std::path::Path;
 use tokio::io::{AsyncReadExt, BufReader};
 
 use crate::Compression;
-use crate::get;
-use crate::parse_manifest;
+use crate::manifest::parse_manifest;
+use crate::utils::get;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Chunk {
