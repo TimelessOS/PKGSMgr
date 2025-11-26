@@ -8,7 +8,6 @@ use pkgsmgr::manifest::{build_tree, parse_manifest, update_manifest};
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 struct Args {
-    repo_url: String,
     #[arg(long)]
     root_path: Option<PathBuf>,
 }
