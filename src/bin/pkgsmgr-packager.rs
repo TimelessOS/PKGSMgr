@@ -1,17 +1,16 @@
 use async_compression::tokio::write::ZstdEncoder;
 use clap::Parser;
-use futures_util::future::try_join_all;
+use nix::fcntl::{AT_FDCWD, RenameFlags, renameat2};
 use std::boxed::Box;
 use std::collections::HashMap;
-use std::hash::Hasher;
-use std::io::Write;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::fs::File;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use pkgsmgr::types::*;
+use pkgsmgr::utils::Hasher;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -55,35 +54,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Beginning hashing and compressing...");
     let mut hashes = HashMap::new();
 
-    for file_group in files.chunks_mut(256) {
-        let futures: Vec<_> = file_group
-            .iter_mut()
-            .map(|file_path| {
-                compress_file(
-                    file_path.to_path_buf(),
-                    args.hash,
-                    args.compression,
-                    chunks_path,
-                )
-            })
-            .collect();
+    for file_path in &files {
+        let hash = hash_file(file_path, args.hash).await?;
 
-        for (path, hash) in try_join_all(futures).await? {
-            hashes.insert(path, hash);
-        }
+        compress(file_path, args.compression, chunks_path, &hash).await?;
+
+        if fs::hard_link(&file_path, chunks_path.join(&hash))
+            .await
+            .is_err()
+        {
+            fs::copy(&file_path, chunks_path.join(&hash)).await?;
+        };
+
+        hashes.insert(file_path, hash);
     }
 
     println!("Generating manifest...");
     let mut manifest = "".to_string();
 
     match args.compression {
-        Compression::Zstd => manifest += "Compressed: zstd\n",
+        Compression::Zstd => manifest += "Compression: zstd\n",
         Compression::None => (),
+    }
+    match args.hash {
+        HashType::Blake3 => manifest += "Hasher: blake3\n",
+        HashType::Xxh3_128 => manifest += "Hasher: xxh3_128\n",
     }
 
     manifest += "---\n";
 
-    for file in files {
+    for file in &files {
         let hash = hashes
             .get(&file)
             .expect("tried adding file to manifest that has no hash");
@@ -94,22 +94,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let size = metadata.size() / 1024;
         let path = file
             .strip_prefix(&args.input_path)
-            .expect("tried adding file to manifest that is outside of input_path");
+            .expect("tried adding file to manifest that is outside of input_path")
+            .to_str()
+            .unwrap();
 
-        manifest += &format!("{mode};{size};{hash};{path:?}\n");
+        manifest += &format!("{mode};{size};{hash};{path}\n");
     }
 
-    fs::write(args.output_path.join("manifest"), manifest).await?;
+    // Atomically replace on-disk manifest
+    let hash = &blake3::hash(manifest.as_bytes()).to_hex().to_string();
+    let tmp_link_path = args.output_path.join("manifest.tmp");
+    let main_link_path = args.output_path.join("manifest");
+    let manifest_path = args.output_path.join(hash);
+
+    fs::write(manifest_path, manifest).await?;
+    fs::write(&tmp_link_path, hash).await?;
+
+    if !&main_link_path.exists() {
+        fs::write(&main_link_path, "").await?;
+    }
+
+    renameat2(
+        AT_FDCWD,
+        &tmp_link_path,
+        AT_FDCWD,
+        &main_link_path,
+        RenameFlags::RENAME_EXCHANGE,
+    )?;
+
+    fs::remove_file(&tmp_link_path).await?;
 
     Ok(())
 }
 
-async fn compress_file(
-    file_path: PathBuf,
-    hash: HashType,
-    compression: Compression,
-    chunks_path: &Path,
-) -> Result<(PathBuf, String), Box<dyn std::error::Error>> {
+async fn hash_file(
+    file_path: &Path,
+    hash_method: HashType,
+) -> Result<String, Box<dyn std::error::Error>> {
     let mut source_file = match File::open(&file_path).await {
         Ok(file) => file,
         Err(e) => {
@@ -117,8 +138,8 @@ async fn compress_file(
             panic!("{e}")
         }
     };
-    let mut xxh_hasher = xxhash_rust::xxh3::Xxh3Default::new();
-    let mut blake3_hasher = blake3::Hasher::new();
+
+    let mut hasher = Hasher::new(hash_method);
 
     let mut buf = [0; 8192];
     loop {
@@ -128,48 +149,55 @@ async fn compress_file(
         }
 
         let chunk = &buf[0..n];
-        match hash {
-            HashType::Blake3 => blake3_hasher.write_all(chunk)?,
-            HashType::Xxh3_128 => xxh_hasher.write_all(chunk)?,
-        }
+        hasher.write(chunk);
     }
 
-    let hash = match hash {
-        HashType::Xxh3_128 => hex::encode(xxh_hasher.finish().to_le_bytes()),
-        HashType::Blake3 => blake3_hasher.finalize().to_hex().to_string(),
+    let hash = hasher.digest();
+
+    Ok(hash)
+}
+
+async fn compress(
+    file_path: &Path,
+    compression: Compression,
+    chunks_path: &Path,
+    hash: &str,
+) -> Result<(), std::io::Error> {
+    let compressed_chunk_filename = match compression {
+        Compression::Zstd => format!("{hash}.zstd"),
+        Compression::None => panic!("Tried to compress on a non-compressable request."),
     };
+    let compressed_chunk_path = &chunks_path.join(compressed_chunk_filename);
 
-    let chunk_path = &chunks_path.join(&hash);
-
-    if !chunk_path.exists() {
+    if !compressed_chunk_path.exists() {
         let mut source_file = File::open(&file_path).await.unwrap();
         let temp_file_path = temp_file::TempFile::new()?;
-        let temp_file = File::create(&temp_file_path).await?;
+        let mut temp_file = File::create(&temp_file_path).await?;
 
-        if compression == Compression::Zstd {
-            let mut zstd = ZstdEncoder::new(temp_file);
-
-            let mut buf = [0; 8192];
-            loop {
-                let n = source_file.read(&mut buf).await?;
-                if n == 0 {
-                    break;
-                }
-
-                zstd.write_all(&buf).await?;
-            }
-
-            let mut zstd_path = chunk_path.clone();
-            zstd_path.set_extension("zstd");
-            fs::copy(temp_file_path, zstd_path).await?;
-        }
-
-        if fs::hard_link(&file_path, chunk_path).await.is_err() {
-            fs::copy(&file_path, chunk_path).await?;
+        let mut compressor: Box<dyn AsyncWrite + Sync + Unpin> = match compression {
+            Compression::Zstd => Box::new(ZstdEncoder::new(&mut temp_file)),
+            Compression::None => panic!("Tried to copmress on a non-compressable request."),
         };
 
-        println!("Created chunk from path {file_path:?}");
+        let mut buf = [0; 8192];
+        loop {
+            let n = source_file.read(&mut buf).await?;
+            if n == 0 {
+                break;
+            }
+
+            compressor.write_all(&buf[0..n]).await?;
+        }
+
+        // Finish compressing
+        compressor.flush().await?;
+        compressor.shutdown().await?;
+
+        // Move compressed from memory and onto disk
+        fs::copy(temp_file_path, compressed_chunk_path).await?;
+
+        println!("Compressed chunk from path {file_path:?}");
     };
 
-    Ok((file_path, hash))
+    Ok(())
 }

@@ -5,6 +5,19 @@ use std::path::Path;
 
 use crate::chunks::{Chunk, chunk_filename};
 
+pub fn try_update_manifest_hash(manifests_path: &Path, hash: &str) -> Result<bool, io::Error> {
+    let hash_path = &manifests_path.join("latest_hash");
+
+    let old_hash = fs::read_to_string(hash_path).unwrap_or("_".to_string());
+
+    if old_hash == hash {
+        Ok(false)
+    } else {
+        fs::write(hash_path, hash)?;
+        Ok(true)
+    }
+}
+
 pub fn parse_manifest(raw_manifest: &str) -> (HashMap<&str, &str>, Vec<Chunk>) {
     let (raw_headers, raw_chunklist) = raw_manifest
         .split_once("---")
@@ -81,7 +94,7 @@ pub fn build_tree(
     staging_path: &Path,
     chunkstore_path: &Path,
     chunks: &[Chunk],
-) -> Result<(), std::io::Error> {
+) -> Result<(), io::Error> {
     if staging_path.exists() {
         fs::remove_dir_all(staging_path)?;
     }

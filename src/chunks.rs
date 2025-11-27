@@ -1,15 +1,15 @@
 use async_compression::tokio::bufread::ZstdDecoder;
 use futures_util::TryStreamExt;
 use std::collections::HashSet;
-use std::fs;
-use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
-use tokio::io::{AsyncReadExt, BufReader};
+use tokio::fs;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio_util::io::StreamReader;
 
 use crate::manifest::parse_manifest;
-use crate::types::Compression;
-use crate::utils::get;
+use crate::types::{Compression, HashType};
+use crate::utils::{Hasher, get};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Chunk {
@@ -24,6 +24,7 @@ pub async fn install_chunk(
     repo_url: &str,
     chunk_path: &Path,
     compression: &Compression,
+    hash_method: HashType,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("[INFO] Downloading {}", chunk.path);
     let extension = match compression {
@@ -33,44 +34,53 @@ pub async fn install_chunk(
     let chunk_url = format!("{repo_url}/chunks/{}{extension}", chunk.hash);
     let res = get(&chunk_url).await?;
 
-    let mut hasher = blake3::Hasher::new();
+    let mut hasher: Hasher = Hasher::new(hash_method);
+
     let temp_file_path = chunk_path.join(format!("{}.new", chunk.hash));
-    let mut temp_file = fs::File::create(&temp_file_path)?;
+    let mut temp_file = fs::File::create(&temp_file_path).await?;
 
     // Turn the response into a stream
-    let stream = res.bytes_stream().map_err(std::io::Error::other);
-    let stream = tokio_util::io::StreamReader::new(stream);
+    let stream = res.bytes_stream();
+
+    let stream_reader = StreamReader::new(stream.map_err(std::io::Error::other));
 
     // Turn the response into a reader, decompressing if required.
     let mut reader: Box<dyn tokio::io::AsyncRead + Unpin + Send> = match compression {
-        Compression::None => Box::new(stream),
-        Compression::Zstd => Box::new(ZstdDecoder::new(BufReader::new(stream))),
+        Compression::Zstd => Box::new(ZstdDecoder::new(stream_reader)),
+        Compression::None => Box::new(stream_reader),
     };
 
-    let mut buf = [0u8; 8192];
+    // 64kb buf
+    let mut buf = [0u8; 1024 * 64];
     loop {
-        let n = reader.read(&mut buf).await?;
+        let n = reader.read(&mut buf).await.expect("network buf err");
         if n == 0 {
             break;
         }
 
         let chunk = &buf[0..n];
 
-        hasher.update(chunk);
-        temp_file.write_all(chunk)?;
+        hasher.write(chunk);
+
+        temp_file.write_all(chunk).await?;
     }
 
-    if *hasher.finalize().to_hex() != *chunk.hash {
-        panic!("Invalid hash recieved. Corruption?")
+    let hash = hasher.digest();
+
+    if hash != *chunk.hash {
+        panic!(
+            "Invalid hash recieved. Got {hash}, but expected {}",
+            chunk.hash
+        )
     }
 
     // Set permissions
-    let mut perms = temp_file.metadata()?.permissions();
+    let mut perms = temp_file.metadata().await?.permissions();
     perms.set_mode(chunk.permissions);
     perms.set_readonly(true);
-    temp_file.set_permissions(perms)?;
+    temp_file.set_permissions(perms).await?;
 
-    fs::rename(&temp_file_path, chunk_path.join(chunk_filename(chunk)))?;
+    fs::rename(&temp_file_path, chunk_path.join(chunk_filename(chunk))).await?;
 
     Ok(())
 }
@@ -79,6 +89,8 @@ pub fn clean_old_chunks(
     manifests_path: &Path,
     chunkstore_path: &Path,
 ) -> Result<u64, std::io::Error> {
+    use std::fs;
+
     let mut freed = 0;
     let mut allowed_chunks = HashSet::new();
 
