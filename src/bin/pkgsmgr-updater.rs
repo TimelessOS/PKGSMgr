@@ -46,7 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !try_update_manifest_hash(manifests_path, &manifest_hash)? {
         println!("[INFO] Skipping, no update found.");
         std::process::exit(0);
-    }
+    };
     println!("[INFO] Update found, downloading manifest...");
 
     let manifest_raw = get(&format!("{}/{}", &args.repo_url, manifest_hash))
