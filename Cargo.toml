@@ -12,7 +12,7 @@ hex = "0.4.3"
 nix = { version = "0.30.1", features = ["fs"] }
 reqwest = { version = "0.12.24", features = ["stream"] }
 temp-file = "0.1.9"
-tokio = { version = "1.48.0", features = ["fs", "macros", "rt", "rt-multi-thread"] }
+tokio = { version = "1.49.0", features = ["fs", "macros", "rt", "rt-multi-thread"] }
 tokio-util = { version = "0.7.17", features = ["io"] }
 walkdir = "2.5.0"
 xxh3 = "0.1.1"
